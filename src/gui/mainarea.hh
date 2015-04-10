@@ -22,20 +22,22 @@ namespace Gui
          explicit MainArea ( void );
          virtual ~MainArea ( void );
          
-      private slots:
-         void sendMessage ( void );
-         
+      signals:
+         void sendUserInfo ( void );
+                  
       private:
          void buildGui ( void );
          void connectAll ( void );
          
       private:
          QVBoxLayout* mMainLayout;
+         
+         QHBoxLayout* mWebUrlLayout;
          QLabel* mWebUrlLabel;
          QLineEdit* mWebUrlLine;
-         QHBoxLayout* mLabelsLayout;
-         QHBoxLayout* mButtonsLayout;
-         QPushButton* mConnectButton;
+         
+         QHBoxLayout* mSendUserInfoLayout;
+         QPushButton* mSendUserInfoButton;
    };
 }
 

@@ -3,41 +3,26 @@
 Core::Control::Control ( void )
    : QObject ()
 {
-   mNetworkManager = new QNetworkAccessManager ( this );
-   connect ( mNetworkManager , SIGNAL ( finished ( QNetworkReply* ) ) ,
-             this            , SLOT ( readResponse ( QNetworkReply* ) ) );
-   mWebUrl = new QUrl ( Base::Config::get ( "WebUrl" ) );
+   mUserInfoDialogsCounter = 0;
+   
+   connect ( &mCleanUnusedComponentsTimer , SIGNAL ( timeout () ) ,
+             this                         , SLOT ( cleanUnusedComponents () ) );
+   
+   mCleanUnusedComponentsTimer.start ( 1000 );
+   
+   mNetworkManager = new Core::NetworkManager ();
+   
+   connect ( mNetworkManager , SIGNAL ( responseReady () ) , this , SLOT ( networkResponseReady () ) );
 }
 
 Core::Control::~Control ( void )
 {
    delete mNetworkManager;
-   delete mWebUrl;
 }
 
-QByteArray& Core::Control::getLatestResponse ( void )
-{   
-   return ( Core::Control::instance ()->mLatestResponse );
-}
-
-Core::Control* Core::Control::instance ( void )
+void Core::Control::validateNetworkError ( void )
 {
-   static Core::Control myself;
-   
-   return ( &myself );
-}
-
-void Core::Control::readResponse ( QNetworkReply* response )
-{
-   qDebug () << "Control: Leyendo informacion llegada";
-   
-   qDebug () << "Info: " << response->readAll ();
-   
-   qDebug () << "Info2: " << mNetworkReply->readAll ();
-   
-   emit ( responseReady () );
-   
-   switch ( mNetworkReply->error () )
+   switch ( mNetworkManager->getErrorFound () )
    {
       case QNetworkReply::NoError:
          qDebug () << "NoError";
@@ -140,37 +125,194 @@ void Core::Control::readResponse ( QNetworkReply* response )
    return;
 }
 
-void Core::Control::tryToConnect ( void )
+void Core::Control::networkResponseReady ( void )
 {
-   qDebug () << "Intentando conectar y enviar datos";
-   Core::Control* myself = Core::Control::instance ();
+   QByteArray next_response = mNetworkManager->getNextResponse ();
    
-   QByteArray jsonString = "{\"empleado\":{\"nombre\":\"Moises Chavez\",\"edad\":27}}";
-   QByteArray postDataSize = QByteArray::number(jsonString.size());
+   qDebug () << "Server response: " << next_response;
+   
+   QJsonDocument document;
+   document = QJsonDocument::fromJson ( next_response );
+   
+   QJsonObject main_object;
+   main_object = document.object ();
+   
+   QStringList main_keys;
+   main_keys = main_object.keys ();
+   
+   if ( main_object.isEmpty () )
+   {
+      qDebug () << "Main object is empty";
+      
+      validateNetworkError ();
+      
+      return;
+   }
+   
+   bool final_status = false;
+   QByteArray data_bytes;
+   
+   for ( int i = 0; i < main_keys.size (); i++ )
+   {
+      if ( main_keys[ i ] == "status" )
+      {
+         QJsonValue status_value;
+         status_value = main_object.value ( "status" );
+         
+         if ( status_value.isBool () )
+         {
+            final_status = status_value.toBool ();
+         }
+         else
+            qDebug () << "Status value is not Bool";
+      }
+      else if ( main_keys[ i ] == "data" )
+      {
+         QJsonValue data_value;
+         data_value = main_object.value ( "data" );
+         
+         if ( !data_value.isObject () )
+         {
+            qDebug () << "Data object is not an object";
+            continue;
+         }
+         
+         QJsonObject data_object;
+         data_object = data_value.toObject ();
+         
+         QJsonDocument data_document ( data_object );
+         data_bytes = data_document.toJson ( QJsonDocument::Compact );
+      }
+      else
+         qDebug () << "UNknown key: " << main_keys[ i ];
+   }
+   
+   qDebug () << "Status: " << final_status;
+   qDebug () << "Data bytes: " << data_bytes;
+   
+   validateReceivedJson ( data_bytes );
+   
+   return;
+}
 
-   QNetworkRequest request( *(myself->mWebUrl) );
-   request.setRawHeader("User-Agent", "MoisesTest1");
-   request.setRawHeader("X-Custom-User-Agent", "MoisesTest1");
-   request.setRawHeader("Content-Type", "application/json");
-   request.setRawHeader("Content-Length", postDataSize);
+void Core::Control::validateReceivedJson ( QByteArray& json_data )
+{
+   qDebug () << "Validating received info: " << json_data;
+   
+   return;
+}
 
-   myself->mNetworkReply = myself->mNetworkManager->post ( request , jsonString );
+void Core::Control::sendUserInfo ( void )
+{
+   Gui::Dialogs::UserInfoInput* user_info_dialog;
+   user_info_dialog = new Gui::Dialogs::UserInfoInput ( mUserInfoDialogsCounter );
    
-   /*QByteArray post_information;
+   connect ( user_info_dialog , SIGNAL ( infoReady ( unsigned int ) ) , 
+             this             , SLOT ( userInfoReady ( unsigned int ) ) );
    
-   post_information = "{empleado:{nombre:'Moises Chavez',edad:27}}";
-   //post_information = "test";
+   connect ( user_info_dialog , SIGNAL ( infoCanceled ( unsigned int ) ) , 
+             this             , SLOT ( userInfoCanceled ( unsigned int ) ) );
    
-   myself->mNetworkReply = myself->mNetworkManager->post ( QNetworkRequest ( *(myself->mWebUrl) ) , post_information );
+   mUserInfoDialogsCounter++;
    
-   QUrlQuery post_data;
-   post_data.addQueryItem ( "parameter", "teststring");
+   user_info_dialog->show ();
    
-   QNetworkRequest request ( *(myself->mWebUrl) );
-   request.setHeader ( QNetworkRequest::ContentTypeHeader , 
-                       "application/x-www-form-urlencoded" );
+   QMutexLocker locker ( &mUserInfoDialogsMutex );
+   mUserInfoDialogs.append ( user_info_dialog );
+   
+   return;
+}
 
-   myself->mNetworkReply = myself->mNetworkManager->post ( request , post_data.toString ( QUrl::FullyEncoded ).toUtf8 () );*/
+void Core::Control::userInfoCanceled ( unsigned int user_id )
+{
+   QMutexLocker locker ( &mUnusedInfoDialogsMutex );
+   mUnusedInfoDialogs.append ( user_id );
+   
+   return;
+}
+
+void Core::Control::userInfoReady ( unsigned int user_id )
+{
+   // Busco sobre la lista de dialogos de solicitud para extraer la información
+   bool dialog_found = false;
+   
+   QMutexLocker locker ( &mUserInfoDialogsMutex );
+   
+   for ( int i = 0; i < mUserInfoDialogs.size () && !dialog_found; i++ )
+   {
+      if ( mUserInfoDialogs[ i ]->getUserId () == user_id )
+      {
+         QString user_name;
+         unsigned int user_age;
+         
+         user_name = mUserInfoDialogs[ i ]->getUserName ();
+         user_age = mUserInfoDialogs[ i ]->getUserAge ();
+         
+         prepareUserInfo ( user_name , user_age );
+         
+         dialog_found = true;
+         
+         QMutexLocker locker2 ( &mUnusedInfoDialogsMutex );
+         mUnusedInfoDialogs.append ( user_id );
+      }
+   }
+   
+   if ( !dialog_found )
+      qDebug () << "Logic error";
+   
+   return;
+}
+
+void Core::Control::cleanUnusedComponents ( void )
+{   
+   QMutexLocker active_locker ( &mUserInfoDialogsMutex );
+   QMutexLocker unused_locker ( &mUnusedInfoDialogsMutex );
+   
+   for ( int i = 0; i < mUnusedInfoDialogs.size (); i++ )
+   {
+      bool dialog_found = false;
+      
+      for ( int j = 0; j < mUserInfoDialogs.size () && !dialog_found; j++ )
+      {
+         if ( mUserInfoDialogs[ j ]->getUserId () == mUnusedInfoDialogs[ i ] )
+         {
+            delete mUserInfoDialogs[ j ];
+            mUserInfoDialogs[ j ] = 0;
+            mUserInfoDialogs.removeAt ( j );
+            
+            dialog_found = true;
+         }
+      }
+      
+      if ( !dialog_found )
+         qDebug () << "Dialog " << mUnusedInfoDialogs[ i ] << " not found";
+      else
+      {
+         mUnusedInfoDialogs.removeAt ( i );
+         i = 0;
+      }
+   }
+   
+   return;
+}
+
+void Core::Control::prepareUserInfo ( QString& user_name, unsigned int user_age )
+{   
+   QJsonObject main_object;
+   QJsonObject employee_info;
+   
+   employee_info.insert ( "nombre" , QJsonValue::fromVariant ( user_name ) );
+   employee_info.insert ( "edad" , QJsonValue::fromVariant ( user_age ) );
+   
+   main_object.insert ( "empleado" , employee_info );
+   
+   QJsonDocument document ( main_object );
+   
+   QByteArray json_data = document.toJson ( QJsonDocument::Compact );
+   
+   qDebug () << "Json created: " << json_data;
+   mJsonsSent.append ( json_data );
+   mNetworkManager->sendToServer ( json_data );
    
    return;
 }

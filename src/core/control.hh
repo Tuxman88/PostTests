@@ -2,14 +2,17 @@
 # define CONTROL_HH_
 
 # include <QtCore/QByteArray>
+# include <QtCore/QJsonDocument>
+# include <QtCore/QJsonObject>
+# include <QtCore/QList>
+# include <QtCore/QMutex>
+# include <QtCore/QMutexLocker>
 # include <QtCore/QObject>
-# include <QtCore/QUrl>
-# include <QtCore/QUrlQuery>
-# include <QtNetwork/QNetworkAccessManager>
-# include <QtNetwork/QNetworkReply>
-# include <QtNetwork/QNetworkRequest>
+# include <QtCore/QTimer>
 
 # include "../base/config.hh"
+# include "../gui/dialogs/userinfoinput.hh"
+# include "networkmanager.hh"
 
 namespace Core
 {
@@ -21,23 +24,29 @@ namespace Core
          explicit Control ( void );
          virtual ~Control ( void );
          
-         static Core::Control* instance ( void );
-         
-         static void tryToConnect ( void );
-         
-         static QByteArray& getLatestResponse ( void );
-         
-      signals:
-         void responseReady ( void );
-         
-      private slots:
-         void readResponse ( QNetworkReply* response );
+      public slots:
+         void sendUserInfo ( void );
          
       private:
-         QByteArray mLatestResponse;
-         QUrl* mWebUrl;
-         QNetworkAccessManager* mNetworkManager;
-         QNetworkReply* mNetworkReply;
+         void prepareUserInfo ( QString& user_name , unsigned int user_age );
+         void validateNetworkError ( void );
+         void validateReceivedJson ( QByteArray& json_data );
+                  
+      private slots:
+         void cleanUnusedComponents ( void );
+         void networkResponseReady ( void );
+         void userInfoReady ( unsigned int user_id );
+         void userInfoCanceled ( unsigned int user_id );
+         
+      private:
+         Core::NetworkManager* mNetworkManager;
+         QList< Gui::Dialogs::UserInfoInput* > mUserInfoDialogs;
+         QList< unsigned int > mUnusedInfoDialogs;
+         QList< QByteArray > mJsonsSent;
+         unsigned int mUserInfoDialogsCounter;
+         QMutex mUserInfoDialogsMutex;
+         QMutex mUnusedInfoDialogsMutex;
+         QTimer mCleanUnusedComponentsTimer;
    };
 }
 

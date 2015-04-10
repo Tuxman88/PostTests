@@ -15,8 +15,12 @@ namespace Gui
          explicit MainWindow ( void );
          virtual ~MainWindow ( void );
          
+      signals:
+         void sendUserInfo ( void );
+         
       private:
          void buildGui ( void );
+         void connectAll ( void );
          
       private:
          Gui::MainArea* mMainArea;
